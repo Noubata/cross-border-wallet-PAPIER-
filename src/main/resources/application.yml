@@ -2,9 +2,9 @@ spring:
   application:
     name: cross-border-wallet
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wallet}
-    username: ${SPRING_DATASOURCE_USERNAME:wallet}
-    password: ${SPRING_DATASOURCE_PASSWORD:wallet}
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
   flyway:
     enabled: true
     default-schema: public
@@ -16,12 +16,15 @@ server:
   port: ${SERVER_PORT:8080}
 
 springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
   swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
     path: /swagger-ui.html
 
 security:
   jwt:
-    secret: ${JWT_SECRET:local-development-secret-change-before-deployment-2026}
+    secret: ${JWT_SECRET}
     access-token-ttl: PT10M
     refresh-token-ttl: P30D
 
@@ -53,8 +56,8 @@ risk:
     window: PT10M
 
 funding:
-  gateway: ${FUNDING_GATEWAY:fake}
-  webhook-secret: ${FUNDING_WEBHOOK_SECRET:local-funding-webhook-secret}
+  gateway: ${FUNDING_GATEWAY}
+  webhook-secret: ${FUNDING_WEBHOOK_SECRET:${PAYSTACK_SECRET_KEY}}
   paystack:
     secret-key: ${PAYSTACK_SECRET_KEY:}
     base-url: ${PAYSTACK_BASE_URL:https://api.paystack.co}

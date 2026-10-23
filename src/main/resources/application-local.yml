@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/wallet
+    username: wallet_app
+    password: uK9zHhHAcl8Ztu7kieLpaDcQ+/LpauNG
+
+security:
+  jwt:
+    secret: local-only-secret-at-least-32-bytes-long-0000
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+funding:
+  gateway: fake
+  webhook-secret: local-only-webhook-secret

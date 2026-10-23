@@ -4,6 +4,7 @@ import com.example.crossborder.funding.api.GatewayInitialization;
 import com.example.crossborder.funding.api.PaymentGateway;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -11,6 +12,7 @@ import java.util.HexFormat;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+@Profile({"local", "test"})
 @Component
 @ConditionalOnProperty(name = "funding.gateway", havingValue = "fake", matchIfMissing = true)
 public class FakePaymentGateway implements PaymentGateway {
