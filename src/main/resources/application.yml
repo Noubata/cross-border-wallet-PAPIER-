@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: cross-border-wallet
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/wallet}
+    username: ${SPRING_DATASOURCE_USERNAME:wallet}
+    password: ${SPRING_DATASOURCE_PASSWORD:wallet}
+  flyway:
+    enabled: true
+    default-schema: public
+  sql:
+    init:
+      mode: never
+
+server:
+  port: ${SERVER_PORT:8080}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:local-development-secret-change-before-deployment-2026}
+    access-token-ttl: PT10M
+    refresh-token-ttl: P30D
+
+auth:
+  rate-limit:
+    capacity: 10
+    refill-period: PT1M
