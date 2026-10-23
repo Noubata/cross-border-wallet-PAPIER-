@@ -66,6 +66,14 @@ public class ProblemFactory {
             case "admin.review_reason_invalid" -> french ? "Motif de décision invalide." : "Review reason is invalid.";
             case "transfer.not_found" -> french ? "Transfert introuvable." : "Transfer was not found.";
             case "wallet.status_transition_invalid" -> french ? "Changement d'état du portefeuille invalide." : "Wallet status transition is invalid.";
+            case "funding.request_invalid" -> french ? "Demande de financement invalide." : "Funding request is invalid.";
+            case "funding.amount_invalid" -> french ? "Montant invalide ou précision non prise en charge." : "Amount is invalid or has unsupported precision.";
+            case "funding.currency_mismatch" -> french ? "La devise ne correspond pas au portefeuille." : "Currency does not match the wallet.";
+            case "funding.signature_invalid" -> french ? "Signature du webhook invalide." : "Webhook signature is invalid.";
+            case "funding.webhook_invalid" -> french ? "Charge utile du webhook invalide." : "Webhook payload is invalid.";
+            case "funding.payment_not_found" -> french ? "Paiement introuvable." : "Funding payment was not found.";
+            case "funding.payment_mismatch" -> french ? "Le montant ou la devise du paiement ne correspond pas." : "Payment amount or currency does not match.";
+            case "funding.wallet_unavailable" -> french ? "Le portefeuille de destination n'est pas disponible." : "Funding wallet is unavailable.";
             case "fx.system_account_invalid" -> french ? "Type de compte système invalide." : "System account type is invalid.";
             default -> french ? "Requête invalide." : "Invalid request.";
         };

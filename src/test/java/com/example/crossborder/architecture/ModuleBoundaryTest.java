@@ -12,7 +12,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 class ModuleBoundaryTest {
 
     private static final List<String> MODULES = List.of(
-            "auth", "customer", "wallet", "ledger", "fx", "transfer", "risk", "admin", "audit"
+            "auth", "customer", "wallet", "ledger", "fx", "transfer", "risk", "admin", "audit", "funding"
     );
 
     @Test

@@ -51,3 +51,10 @@ risk:
   velocity:
     max-transfers: 5
     window: PT10M
+
+funding:
+  gateway: ${FUNDING_GATEWAY:fake}
+  webhook-secret: ${FUNDING_WEBHOOK_SECRET:local-funding-webhook-secret}
+  paystack:
+    secret-key: ${PAYSTACK_SECRET_KEY:}
+    base-url: ${PAYSTACK_BASE_URL:https://api.paystack.co}

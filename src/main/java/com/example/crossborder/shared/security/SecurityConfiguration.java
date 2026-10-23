@@ -78,10 +78,11 @@ public class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/refresh").permitAll()
+                        .requestMatchers("/api/funding/webhooks/paystack").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/auth/logout", "/api/customers/**", "/api/wallets/**",
-                            "/api/transfers/**", "/api/fx/**")
+                            "/api/transfers/**", "/api/fx/**", "/api/funding/payments/**")
                         .hasAnyRole("USER", "ADMIN")
                         .anyRequest().authenticated())
                     .exceptionHandling(exceptions -> exceptions

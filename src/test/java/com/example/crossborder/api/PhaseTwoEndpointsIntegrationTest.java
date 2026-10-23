@@ -3,6 +3,8 @@ package com.example.crossborder.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.crossborder.wallet.api.WalletView;
+import com.example.crossborder.funding.infrastructure.FakePaymentGateway;
+import com.example.crossborder.ledger.api.LedgerBalanceService;
 import com.example.crossborder.customer.api.CustomerRegistrationService;
 import com.example.crossborder.ledger.api.LedgerAccountService;
 import com.example.crossborder.ledger.api.LedgerEntryRequest;
@@ -78,6 +80,12 @@ class PhaseTwoEndpointsIntegrationTest {
 
     @Autowired
     private LedgerPostingService ledgerPostingService;
+
+    @Autowired
+    private LedgerBalanceService ledgerBalanceService;
+
+    @Autowired
+    private FakePaymentGateway fakePaymentGateway;
 
     @Test
     void registerEndpointCreatesUserAndReturnsTokens() throws Exception {
@@ -382,6 +390,41 @@ class PhaseTwoEndpointsIntegrationTest {
         assertEquals("FAILED", rejected.getBody().get("state").asText());
         }
 
+        @Test
+        void fundingWebhookVerifiesSignatureAndCreditsWalletExactlyOnce() throws Exception {
+        JsonNode registration = register(uniqueEmail(), "en").getBody();
+        String accessToken = registration.get("accessToken").asText();
+        WalletView wallet = createWallet(accessToken, "NGN");
+        HttpHeaders headers = bearerHeaders(accessToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String requestBody = objectMapper.writeValueAsString(Map.of(
+            "walletId", wallet.id(), "amount", "123.45", "currency", "NGN", "email", uniqueEmail()));
+
+        ResponseEntity<JsonNode> payment = restTemplate.exchange("/api/funding/payments", HttpMethod.POST,
+            new HttpEntity<>(requestBody, headers), JsonNode.class);
+        String reference = payment.getBody().get("reference").asText();
+        UUID ledgerAccountId = ledgerAccountId(wallet.id());
+        String webhookBody = objectMapper.writeValueAsString(Map.of("event", "charge.success", "data", Map.of(
+            "reference", reference, "amount", 12345, "currency", "NGN")));
+
+        ResponseEntity<JsonNode> invalid = restTemplate.exchange("/api/funding/webhooks/paystack", HttpMethod.POST,
+            new HttpEntity<>(webhookBody, webhookHeaders("invalid")), JsonNode.class);
+        String signature = fakePaymentGateway.signWebhook(webhookBody.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        ResponseEntity<JsonNode> first = restTemplate.exchange("/api/funding/webhooks/paystack", HttpMethod.POST,
+            new HttpEntity<>(webhookBody, webhookHeaders(signature)), JsonNode.class);
+        ResponseEntity<JsonNode> duplicate = restTemplate.exchange("/api/funding/webhooks/paystack", HttpMethod.POST,
+            new HttpEntity<>(webhookBody, webhookHeaders(signature)), JsonNode.class);
+
+        assertEquals(HttpStatus.CREATED, payment.getStatusCode());
+        assertEquals(HttpStatus.UNAUTHORIZED, invalid.getStatusCode());
+        assertEquals(HttpStatus.OK, first.getStatusCode());
+        assertEquals(HttpStatus.OK, duplicate.getStatusCode());
+        assertEquals(new java.math.BigDecimal("123.45"), ledgerBalanceService.getBalance(ledgerAccountId));
+        assertEquals(1, jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM funding.payments WHERE gateway_reference = ? AND status = 'SUCCEEDED'",
+            Integer.class, reference));
+        }
+
     private ResponseEntity<JsonNode> getProfile(String accessToken) {
         return restTemplate.exchange("/api/customers/me", HttpMethod.GET,
                 new HttpEntity<>(bearerHeaders(accessToken)), JsonNode.class);
@@ -401,6 +444,13 @@ class PhaseTwoEndpointsIntegrationTest {
     private HttpHeaders bearerHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
+        return headers;
+    }
+
+    private HttpHeaders webhookHeaders(String signature) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("x-paystack-signature", signature);
         return headers;
     }
 
