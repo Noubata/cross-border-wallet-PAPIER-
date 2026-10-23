@@ -80,7 +80,7 @@ public class SecurityConfiguration {
                         .requestMatchers("/api/auth/register", "/api/auth/login", "/api/auth/refresh").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/auth/logout", "/api/customers/**", "/api/wallets/**",
-                            "/api/transfers/**")
+                            "/api/transfers/**", "/api/fx/**")
                         .hasAnyRole("USER", "ADMIN")
                         .anyRequest().authenticated())
                     .exceptionHandling(exceptions -> exceptions

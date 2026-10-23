@@ -32,14 +32,15 @@ public class TransferRepository {
 
     public Optional<IdempotencyRecord> findIdempotency(UUID customerId, String operation, String key) {
         return jdbcTemplate.query("""
-                        SELECT id, request_hash, transfer_id, response_body
+                        SELECT id, request_hash, transfer_id, response_status, response_body
                           FROM transfer.idempotency_requests
                          WHERE customer_id = ? AND operation = ? AND idempotency_key = ?
                          FOR UPDATE
                         """,
                 resultSet -> resultSet.next() ? Optional.of(new IdempotencyRecord(
                         resultSet.getObject("id", UUID.class), resultSet.getString("request_hash"),
-                        resultSet.getObject("transfer_id", UUID.class), resultSet.getString("response_body")))
+                        resultSet.getObject("transfer_id", UUID.class),
+                        (Integer) resultSet.getObject("response_status"), resultSet.getString("response_body")))
                         : Optional.empty(), customerId, operation, key);
     }
 
@@ -55,6 +56,21 @@ public class TransferRepository {
                 amountMinor, amountMinor, currency, currency);
     }
 
+    public void insertConversion(UUID transferId, UUID customerId, UUID sourceWalletId,
+                                 UUID destinationWalletId, long sourceAmountMinor,
+                                 long destinationAmountMinor, String sourceCurrency,
+                                 String destinationCurrency, long feeMinor, UUID quoteId) {
+        jdbcTemplate.update("""
+                INSERT INTO transfer.transfers
+                    (id, customer_id, source_wallet_id, destination_wallet_id,
+                     source_amount_minor, destination_amount_minor, source_currency,
+                     destination_currency, fee_minor, quote_id, state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+                """, transferId, customerId, sourceWalletId, destinationWalletId,
+                sourceAmountMinor, destinationAmountMinor, sourceCurrency, destinationCurrency,
+                feeMinor, quoteId);
+    }
+
     public boolean transitionPending(UUID transferId, TransferState target, String failureCode) {
         return jdbcTemplate.update("""
                 UPDATE transfer.transfers
@@ -67,20 +83,20 @@ public class TransferRepository {
     public Optional<TransferRecord> findTransfer(UUID transferId) {
         return jdbcTemplate.query("""
                         SELECT id, customer_id, source_wallet_id, destination_wallet_id,
-                               source_amount_minor, source_currency, fee_minor, state,
-                               created_at, completed_at
+                               source_amount_minor, source_currency, destination_amount_minor,
+                               destination_currency, fee_minor, quote_id, state, created_at, completed_at
                           FROM transfer.transfers WHERE id = ?
                         """,
                 resultSet -> resultSet.next() ? Optional.of(mapTransfer(resultSet)) : Optional.empty(), transferId);
     }
 
-    public void completeIdempotency(UUID customerId, String operation, String key,
-                                    UUID transferId, String responseBody) {
+     public void completeIdempotency(UUID customerId, String operation, String key,
+                                                UUID transferId, int responseStatus, String responseBody) {
         jdbcTemplate.update("""
                 UPDATE transfer.idempotency_requests
-                   SET transfer_id = ?, response_status = 201, response_body = CAST(? AS jsonb)
+                         SET transfer_id = ?, response_status = ?, response_body = CAST(? AS jsonb)
                  WHERE customer_id = ? AND operation = ? AND idempotency_key = ?
-                """, transferId, responseBody, customerId, operation, key);
+                     """, transferId, responseStatus, responseBody, customerId, operation, key);
     }
 
     private TransferRecord mapTransfer(ResultSet resultSet) throws SQLException {
@@ -88,12 +104,17 @@ public class TransferRepository {
         String currency = resultSet.getString("source_currency").trim();
         int scale = currency.equals("NGN") ? 2 : 0;
         java.sql.Timestamp completed = resultSet.getTimestamp("completed_at");
+        long destinationAmountMinor = resultSet.getLong("destination_amount_minor");
+        String destinationCurrency = resultSet.getString("destination_currency").trim();
+        int destinationScale = destinationCurrency.equals("NGN") ? 2 : 0;
         return new TransferRecord(resultSet.getObject("id", UUID.class),
                 resultSet.getObject("customer_id", UUID.class),
                 resultSet.getObject("source_wallet_id", UUID.class),
                 resultSet.getObject("destination_wallet_id", UUID.class),
                 BigDecimal.valueOf(amountMinor, scale), currency,
+                BigDecimal.valueOf(destinationAmountMinor, destinationScale), destinationCurrency,
                 BigDecimal.valueOf(resultSet.getLong("fee_minor"), scale),
+                resultSet.getObject("quote_id", UUID.class),
                 TransferState.valueOf(resultSet.getString("state")),
                 resultSet.getTimestamp("created_at").toInstant(),
                 completed == null ? null : completed.toInstant());

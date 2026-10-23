@@ -29,3 +29,11 @@ auth:
   rate-limit:
     capacity: 10
     refill-period: PT1M
+
+fx:
+  provider: mock
+  mock:
+    xaf-per-ngn: 0.42
+    spread-basis-points: 150
+    flat-fee-ngn: 100.00
+    flat-fee-xaf: 250

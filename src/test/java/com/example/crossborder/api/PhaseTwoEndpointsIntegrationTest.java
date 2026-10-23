@@ -218,6 +218,60 @@ class PhaseTwoEndpointsIntegrationTest {
                 "password", "strong-password-123", "preferredLanguage", language), JsonNode.class, null);
     }
 
+        @Test
+        void fxQuoteEndpointReturnsShortLivedQuoteWithFees() throws Exception {
+        JsonNode registration = register(uniqueEmail(), "en").getBody();
+        HttpHeaders headers = bearerHeaders(registration.get("accessToken").asText());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String requestBody = objectMapper.writeValueAsString(Map.of(
+            "sourceCurrency", "NGN", "destinationCurrency", "XAF", "sourceAmount", "10000.00"));
+
+        ResponseEntity<JsonNode> response = restTemplate.exchange("/api/fx/quotes", HttpMethod.POST,
+            new HttpEntity<>(requestBody, headers), JsonNode.class);
+
+        assertEquals(HttpStatus.CREATED, response.getStatusCode());
+        assertEquals("NGN", response.getBody().get("sourceCurrency").asText());
+        assertEquals("XAF", response.getBody().get("destinationCurrency").asText());
+        assertEquals(0, new java.math.BigDecimal(response.getBody().get("destinationAmount").asText())
+            .compareTo(new java.math.BigDecimal("4096")));
+        assertEquals(0, new java.math.BigDecimal(response.getBody().get("flatFee").asText())
+            .compareTo(new java.math.BigDecimal("100")));
+        }
+
+        @Test
+        void conversionEndpointConsumesQuoteAndReplaysOriginalInsufficientFundsResponse() throws Exception {
+        JsonNode sourceRegistration = register(uniqueEmail(), "en").getBody();
+        JsonNode destinationRegistration = register(uniqueEmail(), "en").getBody();
+        String sourceToken = sourceRegistration.get("accessToken").asText();
+        WalletView sourceWallet = createWallet(sourceToken, "NGN");
+        WalletView destinationWallet = createWallet(destinationRegistration.get("accessToken").asText(), "XAF");
+
+        HttpHeaders quoteHeaders = bearerHeaders(sourceToken);
+        quoteHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<JsonNode> quoteResponse = restTemplate.exchange("/api/fx/quotes", HttpMethod.POST,
+            new HttpEntity<>(objectMapper.writeValueAsString(Map.of(
+                "sourceCurrency", "NGN", "destinationCurrency", "XAF", "sourceAmount", "1000.00")),
+                quoteHeaders), JsonNode.class);
+        String quoteId = quoteResponse.getBody().get("id").asText();
+
+        HttpHeaders convertHeaders = bearerHeaders(sourceToken);
+        convertHeaders.setContentType(MediaType.APPLICATION_JSON);
+        convertHeaders.set("Idempotency-Key", "fx-convert-idempotency-" + UUID.randomUUID());
+        String conversionRequest = objectMapper.writeValueAsString(Map.of(
+            "sourceWalletId", sourceWallet.id(), "destinationWalletId", destinationWallet.id(),
+            "quoteId", quoteId));
+        ResponseEntity<JsonNode> first = restTemplate.exchange("/api/transfers/convert", HttpMethod.POST,
+            new HttpEntity<>(conversionRequest, convertHeaders), JsonNode.class);
+        ResponseEntity<JsonNode> replay = restTemplate.exchange("/api/transfers/convert", HttpMethod.POST,
+            new HttpEntity<>(conversionRequest, convertHeaders), JsonNode.class);
+
+        assertEquals(HttpStatus.CREATED, quoteResponse.getStatusCode());
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, first.getStatusCode());
+        assertEquals(first.getStatusCode(), replay.getStatusCode());
+        assertEquals(first.getBody(), replay.getBody());
+        assertEquals("FAILED", first.getBody().get("state").asText());
+        }
+
     private ResponseEntity<JsonNode> getProfile(String accessToken) {
         return restTemplate.exchange("/api/customers/me", HttpMethod.GET,
                 new HttpEntity<>(bearerHeaders(accessToken)), JsonNode.class);

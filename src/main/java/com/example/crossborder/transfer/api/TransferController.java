@@ -31,4 +31,14 @@ public class TransferController {
                 idempotencyKey, request);
         return ResponseEntity.status(result.status()).body(result.body());
     }
+
+    @PostMapping("/convert")
+    public ResponseEntity<TransferResponse> convert(
+            Authentication authentication,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @Valid @RequestBody ConvertTransferRequest request) {
+        TransferResult result = transferService.convert(UUID.fromString(authentication.getName()),
+                idempotencyKey, request);
+        return ResponseEntity.status(result.status()).body(result.body());
+    }
 }

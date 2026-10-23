@@ -1,11 +1,14 @@
 package com.example.crossborder.transfer.application;
 
 import com.example.crossborder.audit.api.AuditWriter;
+import com.example.crossborder.fx.api.FxQuoteService;
+import com.example.crossborder.fx.api.FxQuote;
 import com.example.crossborder.ledger.api.LedgerBalanceService;
 import com.example.crossborder.ledger.api.LedgerEntryRequest;
 import com.example.crossborder.ledger.api.LedgerPostingService;
 import com.example.crossborder.shared.error.ApiException;
 import com.example.crossborder.transfer.api.CreateTransferRequest;
+import com.example.crossborder.transfer.api.ConvertTransferRequest;
 import com.example.crossborder.transfer.api.TransferResponse;
 import com.example.crossborder.transfer.domain.IdempotencyRecord;
 import com.example.crossborder.transfer.domain.TransferRecord;
@@ -42,6 +45,7 @@ class TransferServiceTest {
     private LedgerBalanceService ledgerBalanceService;
     private LedgerPostingService ledgerPostingService;
     private AuditWriter auditWriter;
+        private FxQuoteService fxQuoteService;
     private TransferService transferService;
 
     @BeforeEach
@@ -51,8 +55,9 @@ class TransferServiceTest {
         ledgerBalanceService = mock(LedgerBalanceService.class);
         ledgerPostingService = mock(LedgerPostingService.class);
         auditWriter = mock(AuditWriter.class);
+        fxQuoteService = mock(FxQuoteService.class);
         transferService = new TransferService(transferRepository, walletLockService, ledgerBalanceService,
-                ledgerPostingService, auditWriter, new ObjectMapper().findAndRegisterModules());
+                ledgerPostingService, auditWriter, fxQuoteService, new ObjectMapper().findAndRegisterModules());
     }
 
     @Test
@@ -91,7 +96,7 @@ class TransferServiceTest {
                 () -> assertEquals(transferIdHolder[0], result.body().id()));
         verify(ledgerPostingService).postTransaction(eq(transferIdHolder[0]), anyString(), any());
         verify(transferRepository).completeIdempotency(eq(customerId), eq("WALLET_TRANSFER"), eq("key"),
-                eq(transferIdHolder[0]), anyString());
+                eq(transferIdHolder[0]), eq(HttpStatus.CREATED.value()), anyString());
         verify(auditWriter).append(eq(customerId), eq("TRANSFER_COMPLETED"), eq("TRANSFER"),
                 eq(transferIdHolder[0]), any());
     }
@@ -137,13 +142,14 @@ class TransferServiceTest {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         String body = mapper.writeValueAsString(response);
         transferService = new TransferService(transferRepository, walletLockService, ledgerBalanceService,
-                ledgerPostingService, auditWriter, mapper);
+                ledgerPostingService, auditWriter, fxQuoteService, mapper);
         UUID sourceId = response.sourceWalletId();
         UUID destinationId = response.destinationWalletId();
         String hash = hash(new CreateTransferRequest(sourceId, destinationId, new BigDecimal("1.00")));
         when(transferRepository.claimIdempotency(customerId, "WALLET_TRANSFER", "repeat", hash)).thenReturn(false);
         when(transferRepository.findIdempotency(customerId, "WALLET_TRANSFER", "repeat"))
-                .thenReturn(Optional.of(new IdempotencyRecord(UUID.randomUUID(), hash, transferId, body)));
+                .thenReturn(Optional.of(new IdempotencyRecord(UUID.randomUUID(), hash, transferId,
+                        HttpStatus.CREATED.value(), body)));
 
         var result = transferService.transfer(customerId, "repeat",
                 new CreateTransferRequest(sourceId, destinationId, new BigDecimal("1.0")));
@@ -161,7 +167,8 @@ class TransferServiceTest {
         when(transferRepository.claimIdempotency(eq(customerId), eq("WALLET_TRANSFER"), eq("repeat"), anyString()))
                 .thenReturn(false);
         when(transferRepository.findIdempotency(customerId, "WALLET_TRANSFER", "repeat"))
-                .thenReturn(Optional.of(new IdempotencyRecord(UUID.randomUUID(), "different-hash", UUID.randomUUID(), "{}")));
+                .thenReturn(Optional.of(new IdempotencyRecord(UUID.randomUUID(), "different-hash",
+                        UUID.randomUUID(), HttpStatus.CREATED.value(), "{}")));
 
         assertThrows(ApiException.class, () -> transferService.transfer(customerId, "repeat",
                 new CreateTransferRequest(sourceId, destinationId, BigDecimal.ONE)));
@@ -172,6 +179,59 @@ class TransferServiceTest {
         assertThrows(ApiException.class, () -> transferService.transfer(UUID.randomUUID(), "key",
                 new CreateTransferRequest(UUID.randomUUID(), UUID.randomUUID(), BigDecimal.ZERO)));
         verify(transferRepository, never()).claimIdempotency(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void conversionConsumesQuoteAndPostsSourceAndDestinationFeeTransactions() {
+        UUID customerId = UUID.randomUUID();
+        UUID sourceWalletId = UUID.randomUUID();
+        UUID destinationWalletId = UUID.randomUUID();
+        UUID sourceAccount = UUID.randomUUID();
+        UUID destinationAccount = UUID.randomUUID();
+        UUID quoteId = UUID.randomUUID();
+        UUID transferId = UUID.randomUUID();
+        FxQuote quote = new FxQuote(quoteId, "NGN", "XAF", new BigDecimal("10000.00"),
+                new BigDecimal("4096"), new BigDecimal("4158"), new BigDecimal("100.00"),
+                new BigDecimal("62"), new BigDecimal("0.42"), new BigDecimal("0.4096"),
+                Instant.parse("2026-01-01T00:01:00Z"));
+        when(transferRepository.claimIdempotency(eq(customerId), eq("FX_CONVERSION"), eq("convert-key"), anyString()))
+                .thenReturn(true);
+        when(walletLockService.lockWallets(List.of(sourceWalletId, destinationWalletId))).thenReturn(List.of(
+                new LockedWallet(sourceWalletId, customerId, "NGN", sourceAccount, "ACTIVE"),
+                new LockedWallet(destinationWalletId, UUID.randomUUID(), "XAF", destinationAccount, "ACTIVE")));
+        when(fxQuoteService.consumeQuote(customerId, quoteId)).thenReturn(quote);
+        when(ledgerBalanceService.getBalance(sourceAccount)).thenReturn(new BigDecimal("20000.00"));
+        when(fxQuoteService.getSystemAccount("NGN", "FX_CLEARING")).thenReturn(UUID.randomUUID());
+        when(fxQuoteService.getSystemAccount("XAF", "FX_CLEARING")).thenReturn(UUID.randomUUID());
+        when(fxQuoteService.getSystemAccount("NGN", "SYSTEM_FEE")).thenReturn(UUID.randomUUID());
+        when(fxQuoteService.getSystemAccount("XAF", "SYSTEM_FEE")).thenReturn(UUID.randomUUID());
+        when(transferRepository.transitionPending(any(UUID.class),
+                eq(com.example.crossborder.transfer.domain.TransferState.COMPLETED), eq(null))).thenReturn(true);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            transferIdHolder[0] = invocation.getArgument(0);
+            return null;
+        }).when(transferRepository).insertConversion(any(UUID.class), eq(customerId), eq(sourceWalletId),
+                eq(destinationWalletId), eq(1_000_000L), eq(4096L), eq("NGN"), eq("XAF"), eq(10_000L), eq(quoteId));
+        when(transferRepository.findTransfer(any(UUID.class))).thenAnswer(invocation -> Optional.of(
+                new TransferRecord(invocation.getArgument(0), customerId, sourceWalletId, destinationWalletId,
+                        new BigDecimal("10000.00"), "NGN", new BigDecimal("4096"), "XAF",
+                        new BigDecimal("100.00"), quoteId,
+                        com.example.crossborder.transfer.domain.TransferState.COMPLETED,
+                        Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-01T00:00:01Z"))));
+
+        var result = transferService.convert(customerId, "convert-key",
+                new ConvertTransferRequest(sourceWalletId, destinationWalletId, quoteId));
+
+        assertEquals(HttpStatus.CREATED, result.status());
+        assertEquals(new BigDecimal("4096"), result.body().destinationAmount());
+        assertEquals("XAF", result.body().destinationCurrency());
+        assertEquals(quoteId, result.body().quoteId());
+        verify(ledgerPostingService).postTransaction(eq(transferIdHolder[0]), anyString(),
+                org.mockito.ArgumentMatchers.argThat(entries -> entries.size() == 3
+                        && entries.stream().anyMatch(entry -> entry.creditAmount().compareTo(new BigDecimal("100.00")) == 0)));
+        verify(ledgerPostingService).postTransaction(eq(transferIdHolder[0]), anyString(),
+                org.mockito.ArgumentMatchers.argThat(entries -> entries.size() == 3
+                        && entries.stream().anyMatch(entry -> entry.creditAmount().compareTo(new BigDecimal("62")) == 0)));
     }
 
     private String hash(CreateTransferRequest request) throws Exception {

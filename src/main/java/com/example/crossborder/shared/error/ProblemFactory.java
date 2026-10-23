@@ -51,6 +51,16 @@ public class ProblemFactory {
             case "transfer.currency_mismatch" -> french ? "Les portefeuilles doivent utiliser la même devise." : "Wallets must use the same currency.";
             case "transfer.idempotency_conflict" -> french ? "Cette clé d'idempotence est déjà utilisée avec une autre demande." : "Idempotency key was already used with a different request.";
             case "transfer.idempotency_in_progress" -> french ? "Cette demande idempotente est toujours en cours." : "This idempotent request is still in progress.";
+            case "fx.amount_below_fee" -> french ? "Le montant doit être supérieur aux frais." : "Amount must be greater than the flat fee.";
+            case "fx.amount_too_small" -> french ? "Le montant est trop faible pour cette conversion." : "Amount is too small for this conversion.";
+            case "fx.amount_invalid" -> french ? "Montant invalide ou précision non prise en charge." : "Amount is invalid or has unsupported precision.";
+            case "fx.configuration_invalid" -> french ? "Configuration de change invalide." : "FX configuration is invalid.";
+            case "fx.currency_pair_invalid" -> french ? "La paire de devises doit être NGN/XAF ou XAF/NGN." : "Currency pair must be NGN/XAF or XAF/NGN.";
+            case "fx.quote_not_found" -> french ? "Cotation de change introuvable." : "FX quote was not found.";
+            case "fx.quote_expired" -> french ? "La cotation de change a expiré." : "FX quote has expired.";
+            case "fx.quote_used" -> french ? "La cotation a déjà été utilisée." : "FX quote has already been used.";
+            case "fx.quote_wallet_mismatch" -> french ? "La cotation ne correspond pas aux portefeuilles." : "Quote currencies do not match the selected wallets.";
+            case "fx.system_account_invalid" -> french ? "Type de compte système invalide." : "System account type is invalid.";
             default -> french ? "Requête invalide." : "Invalid request.";
         };
     }
