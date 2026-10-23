@@ -7,6 +7,7 @@ import com.example.crossborder.ledger.api.LedgerPostingService;
 import com.example.crossborder.wallet.application.WalletService;
 import com.example.crossborder.wallet.api.WalletView;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,8 +16,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -24,11 +23,9 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-@Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = "spring.main.web-application-type=none")
 class LedgerReconciliationIntegrationTest {
 
-    @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine")
             .withDatabaseName("wallet")
             .withUsername("wallet")
@@ -36,9 +33,24 @@ class LedgerReconciliationIntegrationTest {
 
     @DynamicPropertySource
     static void databaseProperties(DynamicPropertyRegistry registry) {
+        String externalUrl = System.getenv("TEST_DATABASE_URL");
+        if (externalUrl != null && !externalUrl.isBlank()) {
+            registry.add("spring.datasource.url", () -> externalUrl);
+            registry.add("spring.datasource.username", () -> System.getenv("TEST_DATABASE_USERNAME"));
+            registry.add("spring.datasource.password", () -> System.getenv("TEST_DATABASE_PASSWORD"));
+            return;
+        }
+        POSTGRES.start();
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
+
+    @AfterAll
+    static void stopPostgresContainer() {
+        if (POSTGRES.isRunning()) {
+            POSTGRES.stop();
+        }
     }
 
     @Autowired

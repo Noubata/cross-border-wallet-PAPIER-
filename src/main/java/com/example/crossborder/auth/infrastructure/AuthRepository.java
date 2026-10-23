@@ -51,7 +51,7 @@ public class AuthRepository {
         jdbcTemplate.update("""
                 INSERT INTO auth.refresh_tokens (id, user_id, token_hash, expires_at)
                 VALUES (?, ?, ?, ?)
-                """, UUID.randomUUID(), userId, tokenHash, expiresAt);
+                """, UUID.randomUUID(), userId, tokenHash, java.sql.Timestamp.from(expiresAt));
     }
 
     public Optional<RefreshTokenRecord> findActiveRefreshToken(String tokenHash) {

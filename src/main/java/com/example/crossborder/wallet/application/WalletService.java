@@ -5,6 +5,8 @@ import com.example.crossborder.ledger.api.LedgerAccountService;
 import com.example.crossborder.ledger.api.LedgerBalanceService;
 import com.example.crossborder.shared.error.ApiException;
 import com.example.crossborder.wallet.api.WalletView;
+import com.example.crossborder.wallet.api.LockedWallet;
+import com.example.crossborder.wallet.api.WalletLockService;
 import com.example.crossborder.wallet.domain.Wallet;
 import com.example.crossborder.wallet.domain.WalletCurrency;
 import com.example.crossborder.wallet.infrastructure.WalletRepository;
@@ -17,7 +19,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-public class WalletService {
+public class WalletService implements WalletLockService {
 
     private final WalletRepository walletRepository;
     private final LedgerAccountService ledgerAccountService;
@@ -58,6 +60,21 @@ public class WalletService {
         Wallet wallet = walletRepository.findByCustomerAndCurrency(customerId, currency)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "wallet.not_found"));
         return toView(wallet);
+    }
+
+    @Override
+    @Transactional
+    public List<LockedWallet> lockWallets(List<UUID> walletIds) {
+        if (walletIds == null || walletIds.isEmpty() || walletIds.stream().anyMatch(java.util.Objects::isNull)
+                || walletIds.stream().distinct().count() != walletIds.size()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "wallet.lock_request_invalid");
+        }
+        List<UUID> orderedWalletIds = walletIds.stream().sorted().toList();
+        List<LockedWallet> lockedWallets = walletRepository.lockWallets(orderedWalletIds);
+        if (lockedWallets.size() != orderedWalletIds.size()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "wallet.not_found");
+        }
+        return lockedWallets;
     }
 
     private WalletView toView(Wallet wallet) {

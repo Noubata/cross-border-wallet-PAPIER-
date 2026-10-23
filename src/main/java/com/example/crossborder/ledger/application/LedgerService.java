@@ -93,6 +93,15 @@ public class LedgerService implements LedgerAccountService, LedgerBalanceService
             throw new ApiException(HttpStatus.BAD_REQUEST, "ledger.transaction_unbalanced");
         }
 
+        for (PreparedEntry entry : preparedEntries) {
+            if (entry.debitMinor() > 0 && "WALLET".equals(ledgerRepository.findAccountType(entry.accountId()))) {
+                long currentBalance = ledgerRepository.getBalanceMinor(entry.accountId());
+                if (currentBalance < entry.debitMinor()) {
+                    throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ledger.insufficient_funds");
+                }
+            }
+        }
+
         UUID transactionId = UUID.randomUUID();
         ledgerRepository.insertTransaction(transactionId, operationId, currency, description.trim());
         for (PreparedEntry entry : preparedEntries) {

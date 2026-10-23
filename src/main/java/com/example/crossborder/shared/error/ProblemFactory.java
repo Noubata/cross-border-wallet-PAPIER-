@@ -43,6 +43,14 @@ public class ProblemFactory {
             case "ledger.transaction_unbalanced" -> french ? "Les écritures ne sont pas équilibrées." : "Ledger entries are not balanced.";
             case "ledger.amount_invalid" -> french ? "Montant invalide ou précision non prise en charge." : "Amount is invalid or has unsupported precision.";
             case "ledger.amount_out_of_range" -> french ? "Montant hors limites." : "Amount is out of range.";
+            case "ledger.insufficient_funds" -> french ? "Solde insuffisant." : "Insufficient funds.";
+            case "wallet.lock_request_invalid" -> french ? "Demande de verrouillage de portefeuille invalide." : "Wallet lock request is invalid.";
+            case "wallet.not_active" -> french ? "Un portefeuille n'est pas actif." : "A wallet is not active.";
+            case "transfer.request_invalid" -> french ? "Demande de transfert invalide." : "Transfer request is invalid.";
+            case "transfer.amount_invalid" -> french ? "Montant invalide ou précision non prise en charge." : "Amount is invalid or has unsupported precision.";
+            case "transfer.currency_mismatch" -> french ? "Les portefeuilles doivent utiliser la même devise." : "Wallets must use the same currency.";
+            case "transfer.idempotency_conflict" -> french ? "Cette clé d'idempotence est déjà utilisée avec une autre demande." : "Idempotency key was already used with a different request.";
+            case "transfer.idempotency_in_progress" -> french ? "Cette demande idempotente est toujours en cours." : "This idempotent request is still in progress.";
             default -> french ? "Requête invalide." : "Invalid request.";
         };
     }

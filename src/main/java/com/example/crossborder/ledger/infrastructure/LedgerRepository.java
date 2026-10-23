@@ -60,4 +60,9 @@ public class LedgerRepository {
                 """, Long.class, accountId);
         return balance == null ? 0 : balance;
     }
+
+    public String findAccountType(UUID accountId) {
+        return jdbcTemplate.queryForObject("SELECT account_type FROM ledger.accounts WHERE id = ?",
+                String.class, accountId);
+    }
 }

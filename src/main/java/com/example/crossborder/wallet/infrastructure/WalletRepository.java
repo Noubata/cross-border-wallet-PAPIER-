@@ -2,6 +2,7 @@ package com.example.crossborder.wallet.infrastructure;
 
 import com.example.crossborder.wallet.domain.Wallet;
 import com.example.crossborder.wallet.domain.WalletCurrency;
+import com.example.crossborder.wallet.api.LockedWallet;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -50,6 +51,26 @@ public class WalletRepository {
                    SET balance_minor = balance_minor + ?
                  WHERE ledger_account_id = ?
                 """, balanceDelta, ledgerAccountId);
+    }
+
+    public List<LockedWallet> lockWallets(List<UUID> walletIds) {
+        if (walletIds.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(walletIds.size(), "?"));
+        return jdbcTemplate.query("""
+                        SELECT id, customer_id, currency, ledger_account_id, status
+                          FROM wallet.wallets
+                         WHERE id IN (%s)
+                         ORDER BY id
+                         FOR UPDATE
+                        """.formatted(placeholders),
+                (resultSet, rowNumber) -> new LockedWallet(
+                        resultSet.getObject("id", UUID.class),
+                        resultSet.getObject("customer_id", UUID.class),
+                        resultSet.getString("currency").trim(),
+                        resultSet.getObject("ledger_account_id", UUID.class),
+                        resultSet.getString("status")), walletIds.toArray());
     }
 
     private Wallet mapWallet(java.sql.ResultSet resultSet) throws java.sql.SQLException {
