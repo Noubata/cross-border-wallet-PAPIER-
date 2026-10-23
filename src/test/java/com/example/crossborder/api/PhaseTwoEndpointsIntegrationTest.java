@@ -3,6 +3,10 @@ package com.example.crossborder.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.crossborder.wallet.api.WalletView;
+import com.example.crossborder.customer.api.CustomerRegistrationService;
+import com.example.crossborder.ledger.api.LedgerAccountService;
+import com.example.crossborder.ledger.api.LedgerEntryRequest;
+import com.example.crossborder.ledger.api.LedgerPostingService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +18,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -23,6 +28,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "auth.rate-limit.capacity=100")
@@ -60,6 +66,18 @@ class PhaseTwoEndpointsIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CustomerRegistrationService customerRegistrationService;
+
+    @Autowired
+    private LedgerAccountService ledgerAccountService;
+
+    @Autowired
+    private LedgerPostingService ledgerPostingService;
 
     @Test
     void registerEndpointCreatesUserAndReturnsTokens() throws Exception {
@@ -213,6 +231,33 @@ class PhaseTwoEndpointsIntegrationTest {
         return response.getBody();
         }
 
+    private String registerAdminAndLogin() throws Exception {
+        String email = uniqueEmail();
+        register(email, "en");
+        jdbcTemplate.update("UPDATE auth.users SET role = 'ADMIN' WHERE email = ?", email);
+        ResponseEntity<JsonNode> login = post("/api/auth/login",
+                Map.of("email", email, "password", "strong-password-123"), JsonNode.class, null);
+        assertEquals(HttpStatus.OK, login.getStatusCode());
+        return login.getBody().get("accessToken").asText();
+    }
+
+    private ResponseEntity<JsonNode> createFlaggedTransfer(String accessToken, WalletView source,
+                                                            WalletView destination, String idempotencyKey)
+            throws Exception {
+        HttpHeaders headers = bearerHeaders(accessToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("Idempotency-Key", idempotencyKey);
+        String body = objectMapper.writeValueAsString(Map.of(
+                "sourceWalletId", source.id(), "destinationWalletId", destination.id(), "amount", "600000.00"));
+        return restTemplate.exchange("/api/transfers", HttpMethod.POST,
+                new HttpEntity<>(body, headers), JsonNode.class);
+    }
+
+    private UUID ledgerAccountId(UUID walletId) {
+        return jdbcTemplate.queryForObject("SELECT ledger_account_id FROM wallet.wallets WHERE id = ?",
+                UUID.class, walletId);
+    }
+
     private ResponseEntity<JsonNode> register(String email, String language) throws Exception {
         return post("/api/auth/register", Map.of("email", email,
                 "password", "strong-password-123", "preferredLanguage", language), JsonNode.class, null);
@@ -270,6 +315,71 @@ class PhaseTwoEndpointsIntegrationTest {
         assertEquals(first.getStatusCode(), replay.getStatusCode());
         assertEquals(first.getBody(), replay.getBody());
         assertEquals("FAILED", first.getBody().get("state").asText());
+        }
+
+        @Test
+        void adminRoutesRequireAdminAndAllowWalletAndAuditOperations() throws Exception {
+        JsonNode user = register(uniqueEmail(), "en").getBody();
+        ResponseEntity<JsonNode> denied = restTemplate.exchange("/api/admin/audit", HttpMethod.GET,
+            new HttpEntity<>(bearerHeaders(user.get("accessToken").asText())), JsonNode.class);
+        assertEquals(HttpStatus.FORBIDDEN, denied.getStatusCode());
+
+        String adminToken = registerAdminAndLogin();
+        WalletView wallet = createWallet(adminToken, "NGN");
+        HttpHeaders adminHeaders = bearerHeaders(adminToken);
+        ResponseEntity<Void> freeze = restTemplate.exchange("/api/admin/wallets/" + wallet.id() + "/freeze",
+            HttpMethod.POST, new HttpEntity<>(adminHeaders), Void.class);
+        ResponseEntity<Void> unfreeze = restTemplate.exchange("/api/admin/wallets/" + wallet.id() + "/unfreeze",
+            HttpMethod.POST, new HttpEntity<>(adminHeaders), Void.class);
+        ResponseEntity<JsonNode[]> audit = restTemplate.exchange("/api/admin/audit?limit=50", HttpMethod.GET,
+            new HttpEntity<>(adminHeaders), JsonNode[].class);
+
+        assertEquals(HttpStatus.NO_CONTENT, freeze.getStatusCode());
+        assertEquals(HttpStatus.NO_CONTENT, unfreeze.getStatusCode());
+        assertEquals(HttpStatus.OK, audit.getStatusCode());
+        assertTrue(java.util.Arrays.stream(audit.getBody())
+            .anyMatch(event -> event.get("action").asText().equals("WALLET_FROZEN")));
+        }
+
+        @Test
+        void adminCanApproveAndRejectFlaggedTransfers() throws Exception {
+        String adminToken = registerAdminAndLogin();
+        JsonNode sender = register(uniqueEmail(), "en").getBody();
+        UUID senderId = UUID.fromString(sender.get("userId").asText());
+        String senderToken = sender.get("accessToken").asText();
+        WalletView source = createWallet(senderToken, "NGN");
+        JsonNode firstRecipient = register(uniqueEmail(), "en").getBody();
+        WalletView firstDestination = createWallet(firstRecipient.get("accessToken").asText(), "NGN");
+        JsonNode secondRecipient = register(uniqueEmail(), "en").getBody();
+        WalletView secondDestination = createWallet(secondRecipient.get("accessToken").asText(), "NGN");
+        jdbcTemplate.update("UPDATE customer.profiles SET kyc_status = 'VERIFIED' WHERE customer_id = ?", senderId);
+        UUID sourceAccount = ledgerAccountId(source.id());
+        UUID fundingAccount = ledgerAccountService.createAccount("TEST_FUNDING", "NGN");
+        ledgerPostingService.postTransaction(UUID.randomUUID(), "admin endpoint funding", java.util.List.of(
+            new LedgerEntryRequest(fundingAccount, new java.math.BigDecimal("1200000.00"), java.math.BigDecimal.ZERO),
+            new LedgerEntryRequest(sourceAccount, java.math.BigDecimal.ZERO, new java.math.BigDecimal("1200000.00"))));
+
+        ResponseEntity<JsonNode> flaggedForApproval = createFlaggedTransfer(senderToken, source,
+            firstDestination, "approve-" + UUID.randomUUID());
+        ResponseEntity<JsonNode> flaggedForRejection = createFlaggedTransfer(senderToken, source,
+            secondDestination, "reject-" + UUID.randomUUID());
+        HttpHeaders adminHeaders = bearerHeaders(adminToken);
+        ResponseEntity<JsonNode[]> queue = restTemplate.exchange("/api/admin/transfers/flagged", HttpMethod.GET,
+            new HttpEntity<>(adminHeaders), JsonNode[].class);
+        ResponseEntity<JsonNode> approved = restTemplate.exchange("/api/admin/transfers/"
+                + flaggedForApproval.getBody().get("id").asText() + "/approve", HttpMethod.POST,
+            new HttpEntity<>(adminHeaders), JsonNode.class);
+        adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<JsonNode> rejected = restTemplate.exchange("/api/admin/transfers/"
+                + flaggedForRejection.getBody().get("id").asText() + "/reject", HttpMethod.POST,
+            new HttpEntity<>(objectMapper.writeValueAsString(Map.of("reason", "manual review")), adminHeaders),
+            JsonNode.class);
+
+        assertEquals(HttpStatus.ACCEPTED, flaggedForApproval.getStatusCode());
+        assertEquals(HttpStatus.ACCEPTED, flaggedForRejection.getStatusCode());
+        assertTrue(queue.getBody().length >= 2);
+        assertEquals("COMPLETED", approved.getBody().get("state").asText());
+        assertEquals("FAILED", rejected.getBody().get("state").asText());
         }
 
     private ResponseEntity<JsonNode> getProfile(String accessToken) {

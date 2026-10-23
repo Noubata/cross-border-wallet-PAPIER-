@@ -9,5 +9,7 @@ public interface FxQuoteService {
 
     FxQuote consumeQuote(UUID customerId, UUID quoteId);
 
+    FxQuote getQuote(UUID customerId, UUID quoteId);
+
     UUID getSystemAccount(String currency, String accountType);
 }

@@ -7,7 +7,10 @@ public enum TransferState {
     FLAGGED;
 
     public TransferState transitionTo(TransferState target) {
-        if (this != PENDING || (target != COMPLETED && target != FAILED && target != FLAGGED)) {
+        boolean pendingTransition = this == PENDING
+                && (target == COMPLETED || target == FAILED || target == FLAGGED);
+        boolean reviewTransition = this == FLAGGED && (target == COMPLETED || target == FAILED);
+        if (!pendingTransition && !reviewTransition) {
             throw new IllegalStateException("Illegal transfer state transition: " + this + " -> " + target);
         }
         return target;

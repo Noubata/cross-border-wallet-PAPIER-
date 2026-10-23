@@ -73,4 +73,12 @@ class CustomerProfileServiceTest {
 
         assertThrows(ApiException.class, () -> service.updatePreferredLanguage(UUID.randomUUID(), "fr"));
     }
+
+    @Test
+    void missingKycProfileDefaultsToPending() {
+        UUID customerId = UUID.randomUUID();
+        when(jdbcTemplate.query(anyString(), any(ResultSetExtractor.class), eq(customerId))).thenReturn(null);
+
+        assertEquals("PENDING", service.getKycStatus(customerId));
+    }
 }

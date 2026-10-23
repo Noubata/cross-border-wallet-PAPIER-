@@ -60,6 +60,12 @@ public class ProblemFactory {
             case "fx.quote_expired" -> french ? "La cotation de change a expiré." : "FX quote has expired.";
             case "fx.quote_used" -> french ? "La cotation a déjà été utilisée." : "FX quote has already been used.";
             case "fx.quote_wallet_mismatch" -> french ? "La cotation ne correspond pas aux portefeuilles." : "Quote currencies do not match the selected wallets.";
+            case "risk.rejected" -> french ? "Le transfert a été rejeté par les contrôles de risque." : "Transfer was rejected by risk controls.";
+            case "risk.flagged" -> french ? "Le transfert nécessite une validation administrative." : "Transfer requires administrator review.";
+            case "admin.transfer_not_flagged" -> french ? "Ce transfert n'attend pas de validation." : "Transfer is not awaiting review.";
+            case "admin.review_reason_invalid" -> french ? "Motif de décision invalide." : "Review reason is invalid.";
+            case "transfer.not_found" -> french ? "Transfert introuvable." : "Transfer was not found.";
+            case "wallet.status_transition_invalid" -> french ? "Changement d'état du portefeuille invalide." : "Wallet status transition is invalid.";
             case "fx.system_account_invalid" -> french ? "Type de compte système invalide." : "System account type is invalid.";
             default -> french ? "Requête invalide." : "Invalid request.";
         };

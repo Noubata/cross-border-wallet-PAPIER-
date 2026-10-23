@@ -30,7 +30,7 @@ import java.util.concurrent.Future;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@SpringBootTest(properties = "spring.main.web-application-type=none")
+@SpringBootTest(properties = {"spring.main.web-application-type=none", "risk.velocity.max-transfers=1000"})
 class TransferConcurrencyIntegrationTest {
 
     private static final int PARALLEL_WITHDRAWALS = 50;

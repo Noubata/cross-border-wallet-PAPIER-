@@ -7,6 +7,7 @@ import com.example.crossborder.shared.error.ApiException;
 import com.example.crossborder.wallet.api.WalletView;
 import com.example.crossborder.wallet.api.LockedWallet;
 import com.example.crossborder.wallet.api.WalletLockService;
+import com.example.crossborder.wallet.api.WalletManagementService;
 import com.example.crossborder.wallet.domain.Wallet;
 import com.example.crossborder.wallet.domain.WalletCurrency;
 import com.example.crossborder.wallet.infrastructure.WalletRepository;
@@ -19,7 +20,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-public class WalletService implements WalletLockService {
+public class WalletService implements WalletLockService, WalletManagementService {
 
     private final WalletRepository walletRepository;
     private final LedgerAccountService ledgerAccountService;
@@ -75,6 +76,33 @@ public class WalletService implements WalletLockService {
             throw new ApiException(HttpStatus.NOT_FOUND, "wallet.not_found");
         }
         return lockedWallets;
+    }
+
+    @Override
+    @Transactional
+    public void freezeWallet(UUID walletId, UUID adminId) {
+        updateWalletStatus(walletId, "ACTIVE", "FROZEN", adminId, "WALLET_FROZEN");
+    }
+
+    @Override
+    @Transactional
+    public void unfreezeWallet(UUID walletId, UUID adminId) {
+        updateWalletStatus(walletId, "FROZEN", "ACTIVE", adminId, "WALLET_UNFROZEN");
+    }
+
+    private void updateWalletStatus(UUID walletId, String expected, String target,
+                                    UUID adminId, String auditAction) {
+        List<LockedWallet> locked = walletRepository.lockWallets(List.of(walletId));
+        if (locked.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "wallet.not_found");
+        }
+        if (!locked.get(0).status().equals(expected)) {
+            throw new ApiException(HttpStatus.CONFLICT, "wallet.status_transition_invalid");
+        }
+        if (!walletRepository.setStatus(walletId, expected, target)) {
+            throw new ApiException(HttpStatus.CONFLICT, "wallet.status_transition_invalid");
+        }
+        auditWriter.append(adminId, auditAction, "WALLET", walletId, Map.of("status", target));
     }
 
     private WalletView toView(Wallet wallet) {

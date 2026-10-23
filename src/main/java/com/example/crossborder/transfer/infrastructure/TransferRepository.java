@@ -3,6 +3,7 @@ package com.example.crossborder.transfer.infrastructure;
 import com.example.crossborder.transfer.domain.IdempotencyRecord;
 import com.example.crossborder.transfer.domain.TransferRecord;
 import com.example.crossborder.transfer.domain.TransferState;
+import com.example.crossborder.transfer.api.TransferRiskMetrics;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -11,9 +12,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Instant;
+import java.util.List;
 
 @Repository
-public class TransferRepository {
+public class TransferRepository implements TransferRiskMetrics {
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -80,11 +83,50 @@ public class TransferRepository {
                 """, target.name(), failureCode, target.name(), transferId) == 1;
     }
 
+    public boolean transition(UUID transferId, TransferState expected, TransferState target, String failureCode) {
+        return jdbcTemplate.update("""
+                UPDATE transfer.transfers
+                   SET state = ?, failure_code = ?,
+                       completed_at = CASE WHEN ? = 'COMPLETED' THEN now() ELSE completed_at END
+                 WHERE id = ? AND state = ?
+                """, target.name(), failureCode, target.name(), transferId, expected.name()) == 1;
+    }
+
+    @Override
+    public long countRecentTransfers(UUID customerId, Instant since) {
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM transfer.transfers
+                 WHERE customer_id = ? AND created_at >= ? AND state IN ('FLAGGED', 'COMPLETED')
+                """, Long.class, customerId, java.sql.Timestamp.from(since));
+        return count == null ? 0 : count;
+    }
+
+    @Override
+    public BigDecimal getDailyOutgoingTotal(UUID customerId, String currency, Instant dayStart) {
+        Long minorTotal = jdbcTemplate.queryForObject("""
+                SELECT COALESCE(SUM(source_amount_minor), 0) FROM transfer.transfers
+                 WHERE customer_id = ? AND source_currency = ? AND created_at >= ? AND state = 'COMPLETED'
+                """, Long.class, customerId, currency, java.sql.Timestamp.from(dayStart));
+        return BigDecimal.valueOf(minorTotal == null ? 0 : minorTotal, currency.equals("NGN") ? 2 : 0);
+    }
+
+    public List<TransferRecord> findFlaggedTransfers() {
+        return jdbcTemplate.query("""
+                        SELECT id, customer_id, source_wallet_id, destination_wallet_id,
+                               source_amount_minor, source_currency, destination_amount_minor,
+                               destination_currency, fee_minor, quote_id, state, failure_code,
+                               created_at, completed_at
+                          FROM transfer.transfers WHERE state = 'FLAGGED' ORDER BY created_at
+                        """,
+                (resultSet, rowNumber) -> mapTransfer(resultSet));
+    }
+
     public Optional<TransferRecord> findTransfer(UUID transferId) {
         return jdbcTemplate.query("""
                         SELECT id, customer_id, source_wallet_id, destination_wallet_id,
                                source_amount_minor, source_currency, destination_amount_minor,
-                               destination_currency, fee_minor, quote_id, state, created_at, completed_at
+                               destination_currency, fee_minor, quote_id, state, failure_code,
+                               created_at, completed_at
                           FROM transfer.transfers WHERE id = ?
                         """,
                 resultSet -> resultSet.next() ? Optional.of(mapTransfer(resultSet)) : Optional.empty(), transferId);
@@ -116,6 +158,7 @@ public class TransferRepository {
                 BigDecimal.valueOf(resultSet.getLong("fee_minor"), scale),
                 resultSet.getObject("quote_id", UUID.class),
                 TransferState.valueOf(resultSet.getString("state")),
+                resultSet.getString("failure_code"),
                 resultSet.getTimestamp("created_at").toInstant(),
                 completed == null ? null : completed.toInstant());
     }

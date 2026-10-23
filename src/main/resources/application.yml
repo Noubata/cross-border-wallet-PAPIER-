@@ -37,3 +37,17 @@ fx:
     spread-basis-points: 150
     flat-fee-ngn: 100.00
     flat-fee-xaf: 250
+
+risk:
+  single-transfer-threshold:
+    NGN: 500000.00
+    XAF: 1000000
+  kyc-unverified-limit:
+    NGN: 100000.00
+    XAF: 250000
+  daily-outgoing-limit:
+    NGN: 2000000.00
+    XAF: 5000000
+  velocity:
+    max-transfers: 5
+    window: PT10M

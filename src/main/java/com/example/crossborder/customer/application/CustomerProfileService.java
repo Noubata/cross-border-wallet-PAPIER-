@@ -3,6 +3,7 @@ package com.example.crossborder.customer.application;
 import com.example.crossborder.audit.api.AuditWriter;
 import com.example.crossborder.customer.api.CustomerProfileView;
 import com.example.crossborder.customer.api.CustomerRegistrationService;
+import com.example.crossborder.customer.api.CustomerKycQuery;
 import com.example.crossborder.shared.error.ApiException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,7 +14,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-public class CustomerProfileService implements CustomerRegistrationService {
+public class CustomerProfileService implements CustomerRegistrationService, CustomerKycQuery {
 
     private final JdbcTemplate jdbcTemplate;
     private final AuditWriter auditWriter;
@@ -48,6 +49,17 @@ public class CustomerProfileService implements CustomerRegistrationService {
             throw new ApiException(HttpStatus.NOT_FOUND, "customer.not_found");
         }
         return profile;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String getKycStatus(UUID customerId) {
+        String status = jdbcTemplate.query("""
+                        SELECT kyc_status FROM customer.profiles WHERE customer_id = ?
+                        """,
+                resultSet -> resultSet.next() ? resultSet.getString("kyc_status") : null,
+                customerId);
+        return status == null ? "PENDING" : status;
     }
 
     @Transactional

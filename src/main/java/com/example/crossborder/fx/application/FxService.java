@@ -98,6 +98,14 @@ public class FxService implements FxQuoteService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public FxQuote getQuote(UUID customerId, UUID quoteId) {
+        FxRepository.QuoteAmounts amounts = fxRepository.findQuote(customerId, quoteId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "fx.quote_not_found"));
+        return toQuote(amounts);
+    }
+
+    @Override
     @Transactional
     public UUID getSystemAccount(String currency, String accountType) {
         validateCurrency(currency);

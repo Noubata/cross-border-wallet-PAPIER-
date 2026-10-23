@@ -21,4 +21,11 @@ class TransferStateTest {
         assertThrows(IllegalStateException.class,
                 () -> TransferState.PENDING.transitionTo(TransferState.PENDING));
     }
+
+    @Test
+    void flaggedTransfersCanOnlyCompleteOrFailAfterReview() {
+        assertEquals(TransferState.COMPLETED, TransferState.FLAGGED.transitionTo(TransferState.COMPLETED));
+        assertEquals(TransferState.FAILED, TransferState.FLAGGED.transitionTo(TransferState.FAILED));
+        assertThrows(IllegalStateException.class, () -> TransferState.FLAGGED.transitionTo(TransferState.PENDING));
+    }
 }

@@ -53,6 +53,13 @@ public class WalletRepository {
                 """, balanceDelta, ledgerAccountId);
     }
 
+    public boolean setStatus(UUID walletId, String expectedStatus, String newStatus) {
+        return jdbcTemplate.update("""
+                UPDATE wallet.wallets SET status = ?
+                 WHERE id = ? AND status = ?
+                """, newStatus, walletId, expectedStatus) == 1;
+    }
+
     public List<LockedWallet> lockWallets(List<UUID> walletIds) {
         if (walletIds.isEmpty()) {
             return List.of();

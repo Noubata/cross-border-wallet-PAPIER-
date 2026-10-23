@@ -3,6 +3,8 @@ package com.example.crossborder.transfer.application;
 import com.example.crossborder.audit.api.AuditWriter;
 import com.example.crossborder.fx.api.FxQuote;
 import com.example.crossborder.fx.api.FxQuoteService;
+import com.example.crossborder.risk.api.RiskDecision;
+import com.example.crossborder.risk.api.RiskEvaluationService;
 import com.example.crossborder.ledger.api.LedgerBalanceService;
 import com.example.crossborder.ledger.api.LedgerCurrencyRules;
 import com.example.crossborder.ledger.api.LedgerEntryRequest;
@@ -12,6 +14,7 @@ import com.example.crossborder.transfer.api.CreateTransferRequest;
 import com.example.crossborder.transfer.api.ConvertTransferRequest;
 import com.example.crossborder.transfer.api.TransferResponse;
 import com.example.crossborder.transfer.api.TransferResult;
+import com.example.crossborder.transfer.api.TransferReviewService;
 import com.example.crossborder.transfer.domain.IdempotencyRecord;
 import com.example.crossborder.transfer.domain.TransferRecord;
 import com.example.crossborder.transfer.domain.TransferState;
@@ -34,7 +37,7 @@ import java.util.Map;
 import java.util.UUID;
 
 @Service
-public class TransferService {
+public class TransferService implements TransferReviewService {
 
     private static final String OPERATION = "WALLET_TRANSFER";
     private static final String CONVERSION_OPERATION = "FX_CONVERSION";
@@ -45,6 +48,7 @@ public class TransferService {
     private final LedgerPostingService ledgerPostingService;
     private final AuditWriter auditWriter;
     private final FxQuoteService fxQuoteService;
+    private final RiskEvaluationService riskEvaluationService;
     private final ObjectMapper objectMapper;
 
     public TransferService(TransferRepository transferRepository,
@@ -53,6 +57,7 @@ public class TransferService {
                            LedgerPostingService ledgerPostingService,
                            AuditWriter auditWriter,
                            FxQuoteService fxQuoteService,
+                           RiskEvaluationService riskEvaluationService,
                            ObjectMapper objectMapper) {
         this.transferRepository = transferRepository;
         this.walletLockService = walletLockService;
@@ -60,6 +65,7 @@ public class TransferService {
         this.ledgerPostingService = ledgerPostingService;
         this.auditWriter = auditWriter;
         this.fxQuoteService = fxQuoteService;
+        this.riskEvaluationService = riskEvaluationService;
         this.objectMapper = objectMapper;
     }
 
@@ -92,6 +98,12 @@ public class TransferService {
         UUID transferId = UUID.randomUUID();
         transferRepository.insertTransfer(transferId, customerId, source.id(), destination.id(),
             amountMinor, currency);
+
+        RiskDecision riskDecision = riskEvaluationService.evaluate(transferId, customerId, request.amount(), currency);
+        TransferResult riskResult = applyRiskDecision(customerId, OPERATION, idempotencyKey, transferId, riskDecision);
+        if (riskResult != null) {
+            return riskResult;
+        }
 
         BigDecimal sourceBalance = ledgerBalanceService.getBalance(source.ledgerAccountId());
         if (sourceBalance.compareTo(LedgerCurrencyRules.fromMinorUnits(amountMinor, currency)) < 0) {
@@ -161,6 +173,13 @@ public class TransferService {
         UUID transferId = UUID.randomUUID();
         transferRepository.insertConversion(transferId, customerId, source.id(), destination.id(),
             sourceMinor, destinationMinor, source.currency(), destination.currency(), flatFeeMinor, quote.id());
+        RiskDecision riskDecision = riskEvaluationService.evaluate(
+            transferId, customerId, quote.sourceAmount(), source.currency());
+        TransferResult riskResult = applyRiskDecision(
+            customerId, CONVERSION_OPERATION, idempotencyKey, transferId, riskDecision);
+        if (riskResult != null) {
+            return riskResult;
+        }
         BigDecimal sourceBalance = ledgerBalanceService.getBalance(source.ledgerAccountId());
         if (sourceBalance.compareTo(quote.sourceAmount()) < 0) {
             transitionOrThrow(transferId, TransferState.FAILED, "INSUFFICIENT_FUNDS");
@@ -216,6 +235,90 @@ public class TransferService {
                 || request.amount() == null || request.amount().signum() <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "transfer.request_invalid");
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TransferResponse> getFlaggedTransfers() {
+        return transferRepository.findFlaggedTransfers().stream()
+                .map(record -> toResponse(record, null)).toList();
+    }
+
+    @Override
+    @Transactional
+    public TransferResponse approveFlaggedTransfer(UUID transferId, UUID adminId) {
+        TransferRecord record = getTransfer(transferId);
+        if (record.state() != TransferState.FLAGGED) {
+            throw new ApiException(HttpStatus.CONFLICT, "admin.transfer_not_flagged");
+        }
+        List<LockedWallet> wallets = walletLockService.lockWallets(
+                List.of(record.sourceWalletId(), record.destinationWalletId()));
+        LockedWallet source = findWallet(wallets, record.sourceWalletId());
+        LockedWallet destination = findWallet(wallets, record.destinationWalletId());
+        if (!source.status().equals("ACTIVE") || !destination.status().equals("ACTIVE")) {
+            throw new ApiException(HttpStatus.CONFLICT, "wallet.not_active");
+        }
+        if (ledgerBalanceService.getBalance(source.ledgerAccountId()).compareTo(record.amount()) < 0) {
+            transitionFlaggedOrThrow(transferId, TransferState.FAILED, "INSUFFICIENT_FUNDS");
+            auditWriter.append(adminId, "TRANSFER_APPROVAL_FAILED_FUNDS", "TRANSFER", transferId, Map.of());
+            return toResponse(getTransfer(transferId), "INSUFFICIENT_FUNDS");
+        }
+
+        if (record.quoteId() == null) {
+            ledgerPostingService.postTransaction(transferId, "Approved wallet transfer " + transferId, List.of(
+                    new LedgerEntryRequest(source.ledgerAccountId(), record.amount(), BigDecimal.ZERO),
+                    new LedgerEntryRequest(destination.ledgerAccountId(), BigDecimal.ZERO, record.amount())));
+        } else {
+            FxQuote quote = fxQuoteService.getQuote(record.customerId(), record.quoteId());
+            long sourceMinor = toMinorUnits(quote.sourceAmount(), quote.sourceCurrency());
+            long destinationMinor = toMinorUnits(quote.destinationAmount(), quote.destinationCurrency());
+            long grossDestinationMinor = toMinorUnits(quote.grossDestinationAmount(), quote.destinationCurrency());
+            long flatFeeMinor = toNonnegativeMinorUnits(quote.flatFee(), quote.sourceCurrency());
+            long spreadFeeMinor = toNonnegativeMinorUnits(quote.spreadFee(), quote.destinationCurrency());
+            postConversionLedgerEntries(transferId, source, destination, quote,
+                    sourceMinor, destinationMinor, grossDestinationMinor, flatFeeMinor, spreadFeeMinor);
+        }
+        transitionFlaggedOrThrow(transferId, TransferState.COMPLETED, null);
+        auditWriter.append(adminId, "TRANSFER_APPROVED", "TRANSFER", transferId, Map.of());
+        return toResponse(getTransfer(transferId), null);
+    }
+
+    @Override
+    @Transactional
+    public TransferResponse rejectFlaggedTransfer(UUID transferId, UUID adminId, String reason) {
+        TransferRecord record = getTransfer(transferId);
+        if (record.state() != TransferState.FLAGGED) {
+            throw new ApiException(HttpStatus.CONFLICT, "admin.transfer_not_flagged");
+        }
+        transitionFlaggedOrThrow(transferId, TransferState.FAILED, "ADMIN_REJECTED");
+        auditWriter.append(adminId, "TRANSFER_REJECTED", "TRANSFER", transferId,
+                reason == null || reason.isBlank() ? Map.of() : Map.of("reason", reason));
+        return toResponse(getTransfer(transferId), "ADMIN_REJECTED");
+    }
+
+    private TransferResult applyRiskDecision(UUID customerId, String operation, String idempotencyKey,
+                                             UUID transferId, RiskDecision decision) {
+        if (decision.outcome() == RiskDecision.Outcome.APPROVE) {
+            return null;
+        }
+        TransferState state = decision.outcome() == RiskDecision.Outcome.FLAG
+                ? TransferState.FLAGGED : TransferState.FAILED;
+        transitionOrThrow(transferId, state, decision.reasons().isEmpty() ? null : decision.reasons().get(0));
+        HttpStatus status = state == TransferState.FLAGGED ? HttpStatus.ACCEPTED : HttpStatus.UNPROCESSABLE_ENTITY;
+        return persistResponse(customerId, operation, idempotencyKey, transferId, status,
+                state == TransferState.FLAGGED ? "TRANSFER_FLAGGED" : "TRANSFER_RISK_REJECTED");
+    }
+
+    private void transitionFlaggedOrThrow(UUID transferId, TransferState target, String failureCode) {
+        TransferState.FLAGGED.transitionTo(target);
+        if (!transferRepository.transition(transferId, TransferState.FLAGGED, target, failureCode)) {
+            throw new IllegalStateException("Transfer is no longer awaiting review");
+        }
+    }
+
+    private TransferRecord getTransfer(UUID transferId) {
+        return transferRepository.findTransfer(transferId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "transfer.not_found"));
     }
 
     private String hashRequest(CreateTransferRequest request) {
@@ -292,7 +395,7 @@ public class TransferService {
                                            HttpStatus status, String auditAction) {
         TransferRecord record = transferRepository.findTransfer(transferId)
                 .orElseThrow(() -> new IllegalStateException("Created transfer could not be reloaded"));
-        String failureCode = record.state() == TransferState.FAILED ? "INSUFFICIENT_FUNDS" : null;
+        String failureCode = record.failureCode();
         TransferResponse response = toResponse(record, failureCode);
         String responseBody = serialize(response);
         transferRepository.completeIdempotency(customerId, operation, key, transferId, status.value(), responseBody);
@@ -327,7 +430,8 @@ public class TransferService {
 
     private TransferResponse toResponse(TransferRecord record, String failureCode) {
         return new TransferResponse(record.id(), record.sourceWalletId(), record.destinationWalletId(),
-                record.amount(), record.currency(), record.fee(), record.state().name(), failureCode,
+            record.amount(), record.currency(), record.fee(), record.state().name(),
+            record.failureCode() == null ? failureCode : record.failureCode(),
             record.createdAt(), record.completedAt(), record.destinationAmount(),
             record.destinationCurrency(), record.quoteId());
     }

@@ -3,6 +3,8 @@ package com.example.crossborder.transfer.application;
 import com.example.crossborder.audit.api.AuditWriter;
 import com.example.crossborder.fx.api.FxQuoteService;
 import com.example.crossborder.fx.api.FxQuote;
+import com.example.crossborder.risk.api.RiskDecision;
+import com.example.crossborder.risk.api.RiskEvaluationService;
 import com.example.crossborder.ledger.api.LedgerBalanceService;
 import com.example.crossborder.ledger.api.LedgerEntryRequest;
 import com.example.crossborder.ledger.api.LedgerPostingService;
@@ -46,6 +48,7 @@ class TransferServiceTest {
     private LedgerPostingService ledgerPostingService;
     private AuditWriter auditWriter;
         private FxQuoteService fxQuoteService;
+        private RiskEvaluationService riskEvaluationService;
     private TransferService transferService;
 
     @BeforeEach
@@ -56,8 +59,12 @@ class TransferServiceTest {
         ledgerPostingService = mock(LedgerPostingService.class);
         auditWriter = mock(AuditWriter.class);
         fxQuoteService = mock(FxQuoteService.class);
+        riskEvaluationService = mock(RiskEvaluationService.class);
+        when(riskEvaluationService.evaluate(any(UUID.class), any(UUID.class), any(BigDecimal.class), anyString()))
+                .thenReturn(new RiskDecision(RiskDecision.Outcome.APPROVE, List.of()));
         transferService = new TransferService(transferRepository, walletLockService, ledgerBalanceService,
-                ledgerPostingService, auditWriter, fxQuoteService, new ObjectMapper().findAndRegisterModules());
+                ledgerPostingService, auditWriter, fxQuoteService, riskEvaluationService,
+                new ObjectMapper().findAndRegisterModules());
     }
 
     @Test
@@ -133,6 +140,40 @@ class TransferServiceTest {
     }
 
     @Test
+    void riskFlagPersistsFlaggedTransferWithoutMovingMoney() {
+        UUID customerId = UUID.randomUUID();
+        UUID sourceId = UUID.randomUUID();
+        UUID destinationId = UUID.randomUUID();
+        when(transferRepository.claimIdempotency(eq(customerId), eq("WALLET_TRANSFER"), eq("flag-key"), anyString()))
+                .thenReturn(true);
+        when(walletLockService.lockWallets(List.of(sourceId, destinationId))).thenReturn(List.of(
+                new LockedWallet(sourceId, customerId, "NGN", UUID.randomUUID(), "ACTIVE"),
+                new LockedWallet(destinationId, UUID.randomUUID(), "NGN", UUID.randomUUID(), "ACTIVE")));
+        when(transferRepository.transitionPending(any(UUID.class),
+                eq(com.example.crossborder.transfer.domain.TransferState.FLAGGED), eq("SINGLE_TRANSFER_THRESHOLD")))
+                .thenReturn(true);
+        when(transferRepository.findTransfer(any(UUID.class))).thenAnswer(invocation -> Optional.of(
+                new TransferRecord(invocation.getArgument(0), customerId, sourceId, destinationId,
+                        new BigDecimal("600000.00"), "NGN", BigDecimal.ZERO,
+                        com.example.crossborder.transfer.domain.TransferState.FLAGGED,
+                        Instant.parse("2026-01-01T00:00:00Z"), null)));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            transferIdHolder[0] = invocation.getArgument(0);
+            return null;
+        }).when(transferRepository).insertTransfer(any(UUID.class), eq(customerId), eq(sourceId),
+                eq(destinationId), eq(60_000_000L), eq("NGN"));
+        when(riskEvaluationService.evaluate(any(UUID.class), eq(customerId), any(BigDecimal.class), eq("NGN")))
+                .thenReturn(new RiskDecision(RiskDecision.Outcome.FLAG, List.of("SINGLE_TRANSFER_THRESHOLD")));
+
+        var result = transferService.transfer(customerId, "flag-key",
+                new CreateTransferRequest(sourceId, destinationId, new BigDecimal("600000.00")));
+
+        assertEquals(HttpStatus.ACCEPTED, result.status());
+        assertEquals("FLAGGED", result.body().state());
+        verify(ledgerPostingService, never()).postTransaction(any(), anyString(), any());
+    }
+
+    @Test
     void sameKeyAndPayloadReplaysStoredResponseWithoutLockingWallets() throws Exception {
         UUID customerId = UUID.randomUUID();
         UUID transferId = UUID.randomUUID();
@@ -142,7 +183,7 @@ class TransferServiceTest {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
         String body = mapper.writeValueAsString(response);
         transferService = new TransferService(transferRepository, walletLockService, ledgerBalanceService,
-                ledgerPostingService, auditWriter, fxQuoteService, mapper);
+                ledgerPostingService, auditWriter, fxQuoteService, riskEvaluationService, mapper);
         UUID sourceId = response.sourceWalletId();
         UUID destinationId = response.destinationWalletId();
         String hash = hash(new CreateTransferRequest(sourceId, destinationId, new BigDecimal("1.00")));

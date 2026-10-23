@@ -64,6 +64,24 @@ public class FxRepository {
                 quoteId, customerId);
     }
 
+        public Optional<QuoteAmounts> findQuote(UUID customerId, UUID quoteId) {
+        return jdbcTemplate.query("""
+                SELECT id, source_currency, destination_currency, source_amount_minor,
+                       destination_amount_minor, gross_destination_minor, flat_fee_source_minor,
+                       spread_fee_destination_minor, mid_rate, effective_rate, expires_at, used_at
+                  FROM fx.quotes WHERE id = ? AND customer_id = ?
+                """,
+            resultSet -> resultSet.next() ? Optional.of(new QuoteAmounts(
+                resultSet.getObject("id", UUID.class), resultSet.getString("source_currency").trim(),
+                resultSet.getString("destination_currency").trim(), resultSet.getLong("source_amount_minor"),
+                resultSet.getLong("destination_amount_minor"), resultSet.getLong("gross_destination_minor"),
+                resultSet.getLong("flat_fee_source_minor"),
+                resultSet.getLong("spread_fee_destination_minor"), resultSet.getBigDecimal("mid_rate"),
+                resultSet.getBigDecimal("effective_rate"), resultSet.getTimestamp("expires_at").toInstant(),
+                resultSet.getTimestamp("used_at") == null ? null
+                    : resultSet.getTimestamp("used_at").toInstant())) : Optional.empty(), quoteId, customerId);
+        }
+
     public boolean markQuoteUsed(UUID quoteId) {
         return jdbcTemplate.update("UPDATE fx.quotes SET used_at = now() WHERE id = ? AND used_at IS NULL",
                 quoteId) == 1;
