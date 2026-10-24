@@ -1,0 +1,7 @@
+security:
+  jwt:
+    secret: test-only-secret-at-least-32-bytes-long-0000
+
+funding:
+  gateway: fake
+  webhook-secret: test-only-webhook-secret
